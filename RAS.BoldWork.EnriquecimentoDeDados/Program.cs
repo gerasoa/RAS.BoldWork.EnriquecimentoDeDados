@@ -7,7 +7,7 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
     {
         static void Main(string[] args)
         {
-            Process.Anvisa();
+            Process.Enriquecimento();
             Console.WriteLine("fim");
             Console.ReadLine();
         }
