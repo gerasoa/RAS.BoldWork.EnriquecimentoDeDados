@@ -11,6 +11,7 @@ using System.Linq;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace RAS.BoldWork.EnriquecimentoDeDados
 {
@@ -35,27 +36,89 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
 
             foreach (var item in comentarioSiscori)
             {
-                LocalizarRegistroAnvisaPorPalavra(item.Comentario, listaRegistrosAnvisa);
+                LocalizarRegistroAnvisaPorLetra(item.Comentario, listaRegistrosAnvisa);
 
-                if (listaRegistrosAnvisa.Count == 0)
-                 LocalizarRegistroAnvisaPorLetra(item.Comentario, listaRegistrosAnvisa);
-
-                PesquisarListaDeRegistros(listaRegistrosAnvisa);
+                BuscarNumeroDoProcesso(listaRegistrosAnvisa);
 
                 if (listaRegistrosAnvisa.Count > 0)
                 {
-                    item.RegistroAnvisa = string.Join(",", listaRegistrosAnvisa).ToString();
-                    item.NumeroProcesso = "";
+                    var regAnvisa = string.Empty;
+
+                    foreach (var registroAnvisa in listaRegistrosAnvisa)
+                    {
+                        item.RegistroAnvisa += item.RegistroAnvisa == null ? registroAnvisa.Key : string.Concat(",", registroAnvisa.Key);
+                        item.NumeroProcesso += item.NumeroProcesso == null ? registroAnvisa.Value : string.Concat(",", registroAnvisa.Value);
+                    }
                 }
                 else
                 {
-                    item.RegistroAnvisa = "Não Identificado";
-                    item.NumeroProcesso = "Não Identificado";
+                    item.RegistroAnvisa = string.Empty;
+                    item.NumeroProcesso = string.Empty;
                 }
-            }       
+            }
+
+
+            var importacoesComRegistroAnvisa = comentarioSiscori.Where(x => x.RegistroAnvisa != null && x.NumeroProcesso != null);
+
+            BuscarProdutoAnvisa(importacoesComRegistroAnvisa);
+
         }
 
-        private static List<KeyValuePair<string, string>> PesquisarListaDeRegistros(List<KeyValuePair<string, string>> possiveisRegistrosAnvisa)
+        private static void BuscarProdutoAnvisa(IEnumerable<ComentarioSiscori> importacoesComRegistroAnvisa)
+        {
+            var empresa = new EmpresaDetail();
+
+            foreach (var item in importacoesComRegistroAnvisa)
+            {
+                empresa = ObterProduto(item.NumeroProcesso);
+
+            }
+        }
+
+        public static EmpresaDetail ObterProduto(string numeroDoProcesso)
+        {
+            EmpresaDetail empresaDetail = new EmpresaDetail();
+
+            var url = String.Format("https://consultas.anvisa.gov.br/api/consulta/saude/{0}", numeroDoProcesso);
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            request.Method = "GET";
+
+            request.Headers.Add("Host", "consultas.anvisa.gov.br");
+            request.Headers.Add("Connection", "keep-alive");
+            request.Headers.Add("Cache-Control", "no-cache");
+            request.Headers.Add("Pragma", "no-cache");
+            request.Headers.Add("Authorization", "Guest");
+            request.Headers.Add("Accept", "application/json, text/plain, */*");
+            request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.163 Safari/537.36");
+            request.Headers.Add("Sec-Fetch-Dest", "empty");
+            request.Headers.Add("If-Modified-Since", "Mon, 26 Jul 1997 05:00:00 GMT");
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
+            request.Headers.Add("Sec-Fetch-Mode", "cors");
+            request.Headers.Add("Referer", "https://consultas.anvisa.gov.br/");
+            request.Headers.Add("Accept-Encoding", "gzip, deflate, br");
+            request.Headers.Add("Accept-Language", "en-GB,en;q=0.9,pt-BR;q=0.8,pt;q=0.7,en-US;q=0.6,la;q=0.5");
+            request.Headers.Add("Cookie", "FGTServer=2DE20D8040A1176F71792EB219E8DA9BCEDF996805D330F1AFAB13D5103423AE685570373EACB70B61CDD992CE85; _TRAEFIK_BACKEND=http://10.0.2.163:8080; _ga=GA1.3.1928198466.1586652453; _gid=GA1.3.748745771.1586652453; _pk_ref.42.210e=%5B%22%22%2C%22%22%2C1586729610%2C%22http%3A%2F%2Fwww.smerp.com.br%2Fanvisa%2F%3Fac%3Dholder%26holderId%3D56994502000644%22%5D; _pk_id.42.210e=ada19ea00748f083.1585404118.12.1586729610.1586729610.; _pk_ses.42.210e=1");
+
+            request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+
+            try
+            {
+                WebResponse webResponse = request.GetResponse();
+                Stream webStream = webResponse.GetResponseStream();
+                StreamReader responseReader = new StreamReader(webStream);
+                string response = responseReader.ReadToEnd();
+                //Console.Out.WriteLine(response);
+                responseReader.Close();
+                empresaDetail = JsonConvert.DeserializeObject<EmpresaDetail>(response);
+            }
+            catch (Exception e)
+            {
+            }
+
+            return empresaDetail;
+        }
+
+        private static List<KeyValuePair<string, string>> BuscarNumeroDoProcesso(List<KeyValuePair<string, string>> possiveisRegistrosAnvisa)
         {
             //var registroObtido = new Produto();
 
@@ -64,7 +127,15 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
                 var registroObtido = ConsultaAnvisa(possiveisRegistrosAnvisa[i].Key);
 
                 if (registroObtido.content.Count == 0)
+                {
                     possiveisRegistrosAnvisa.RemoveAll(x => x.Key.Equals(possiveisRegistrosAnvisa[i].Key));
+                }
+                else
+                {
+                    //var itens = registroObtido.content.ToList().ForEach(x => x.processo);
+
+                    possiveisRegistrosAnvisa[i] = new KeyValuePair<string, string>(possiveisRegistrosAnvisa[i].Key, registroObtido.content[0].processo.ToString());
+                }                    
             }
 
             return possiveisRegistrosAnvisa;
@@ -109,46 +180,7 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
 
             return produto;
         }
-
-        private static List<KeyValuePair<string, string>> LocalizarRegistroAnvisaPorPalavra(string comentario, List<KeyValuePair<string, string>> listaRegistrosAnvisa)
-        {
-            var arrayPalavras = comentario.Split(" ");            
-
-            foreach (var palavra in arrayPalavras)
-            {
-                var item = palavra
-                            .Replace(".", "")
-                            .Replace("/", "")
-                            .Replace("\"", "")
-                            .Replace(",", "")
-                            .Replace("-", "")
-                            .Replace("_", "")
-                            .Replace(":", "");
-
-                if (item.ToUpper().Contains("ANVISA") && item.Length > 11)
-                {
-                    var palavraAnvisa = item.Substring(item.Length - 11);
-
-                    long a = 0;
-                    if(long.TryParse(palavraAnvisa, out a))
-                    {
-                        listaRegistrosAnvisa.Insert(0, new KeyValuePair<string, string>(a.ToString(),string.Empty));
-                    }
-                }
-
-                if (item.Length == 11)
-                {
-                    long a = 0;
-                    if (long.TryParse(item, out a))
-                    {
-                        listaRegistrosAnvisa.Insert(0, new KeyValuePair<string, string>(a.ToString(), string.Empty));
-                    }
-                }
-            }
-
-            return listaRegistrosAnvisa;
-        }
-
+              
         private static List<KeyValuePair<string, string>> LocalizarRegistroAnvisaPorLetra(string comentario, List<KeyValuePair<string, string>> listaRegistrosAnvisa)
         {
             var arrDescricaoProduto = comentario.ToArray();
