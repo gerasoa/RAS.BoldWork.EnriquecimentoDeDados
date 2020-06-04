@@ -1,10 +1,14 @@
 ﻿using CargaSiscori;
 using CargaSiscori.Models;
+using Newtonsoft.Json;
 using Npgsql;
 using RAS.BoldWork.EnriquecimentoDeDados.Models;
+using RAS.BoldWork.EnriquecimentoDeDados.Services.Models;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -15,7 +19,7 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
         public static void Enriquecimento()
         {
             // selecionar os registros dos capitulos 90, 29 e 30
-            List<ComentarioSiscori> comentariosSiscori = ObterCapitulosParaEnriquecimentoAnvisa("29");
+            List<ComentarioSiscori> comentariosSiscori = ObterCapitulosParaEnriquecimentoAnvisa("99");
 
             if (comentariosSiscori.Count > 0)
             {
@@ -25,52 +29,88 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
 
         public static void EnriquecimentoAnvisa(List<ComentarioSiscori> comentarioSiscori)
         {
-            var registroAnvisa = string.Empty;
-            var NumeroProcesso = string.Empty;
-            var listaRegistrosAnvisa = new List<string>();
+            //var registroAnvisa = string.Empty;
+            //var NumeroProcesso = string.Empty;
+            var listaRegistrosAnvisa = new List<KeyValuePair<string, string>>();
 
             foreach (var item in comentarioSiscori)
             {
                 LocalizarRegistroAnvisaPorPalavra(item.Comentario, listaRegistrosAnvisa);
-                LocalizarRegistroAnvisaPorLetra(item.Comentario, listaRegistrosAnvisa);
+
+                if (listaRegistrosAnvisa.Count == 0)
+                 LocalizarRegistroAnvisaPorLetra(item.Comentario, listaRegistrosAnvisa);
 
                 PesquisarListaDeRegistros(listaRegistrosAnvisa);
 
                 if (listaRegistrosAnvisa.Count > 0)
                 {
-                    //verificar se listaRegistrosAnvisa.ToString() converse um array em uma strinf com virgula 
-                    registroAnvisa = listaRegistrosAnvisa.ToString();
-                    NumeroProcesso = "";
+                    item.RegistroAnvisa = string.Join(",", listaRegistrosAnvisa).ToString();
+                    item.NumeroProcesso = "";
                 }
                 else
                 {
-                    registroAnvisa = "Não Identificado";
-                    NumeroProcesso = "Não Identificado";
+                    item.RegistroAnvisa = "Não Identificado";
+                    item.NumeroProcesso = "Não Identificado";
                 }
             }       
         }
 
-        private static List<string> PesquisarListaDeRegistros(List<string> possiveisRegistrosAnvisa)
+        private static List<KeyValuePair<string, string>> PesquisarListaDeRegistros(List<KeyValuePair<string, string>> possiveisRegistrosAnvisa)
         {
-            var registroObtido = string.Empty;
+            //var registroObtido = new Produto();
 
-            foreach (var itemTeste in possiveisRegistrosAnvisa)
+            for (int i = possiveisRegistrosAnvisa.Count -1; i >= 0; i--)
             {
-                registroObtido = ConsultaAnvisa(itemTeste);
+                var registroObtido = ConsultaAnvisa(possiveisRegistrosAnvisa[i].Key);
 
-                if (registroObtido == null)
-                    possiveisRegistrosAnvisa.Remove(itemTeste);
+                if (registroObtido.content.Count == 0)
+                    possiveisRegistrosAnvisa.RemoveAll(x => x.Key.Equals(possiveisRegistrosAnvisa[i].Key));
             }
 
             return possiveisRegistrosAnvisa;
         }
 
-        private static string ConsultaAnvisa(string registroParaValidar)
+        private static Produto ConsultaAnvisa(string numeroDoRegistro)
         {
-            return registroParaValidar.FirstOrDefault().ToString();
+            Produto produto = new Produto();
+
+            string URL = String.Format("https://consultas.anvisa.gov.br/api/consulta/genericos?count=10&filter%5BnumeroRegistro%5D={0}&page=1", numeroDoRegistro);
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(URL);
+            request.Method = "GET";
+
+            request.Headers.Add("Accept", " application/json, text/plain, */*");
+            request.Headers.Add("Accept-Encoding", " gzip, deflate, br");
+            request.Headers.Add("Accept-Language", " pt-BR, pt; q=0.5");
+            request.Headers.Add("Authorization", " Guest");
+            request.Headers.Add("Cache-Control", " no-cache");
+            request.Headers.Add("Connection", " Keep-Alive");
+            request.Headers.Add("Cookie", " _TRAEFIK_BACKEND=http://10.0.2.115:8080; _pk_ses.42.210e=1; _pk_id.42.210e=08fd40a2cac3e390.1586706970.1.1586707046.1586706970.; FGTServer=2DE20D8040A1176F71792EB219E8DA9BCEDF996805D330F1AFAB13D5103423AE685570373EACB70B61CDD992CE85");
+            request.Headers.Add("Host", " consultas.anvisa.gov.br");
+            request.Headers.Add("If-Modified-Since", " Sat, 26 Jul 1997 05:00:00 GMT");
+            request.Headers.Add("Pragma", " no-cache");
+            request.Headers.Add("Referer", " https://consultas.anvisa.gov.br/");
+            request.Headers.Add("User-Agent", " Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36 Edge/18.18363");
+
+            try
+            {
+                WebResponse webResponse = request.GetResponse();
+                Stream webStream = webResponse.GetResponseStream();
+                StreamReader responseReader = new StreamReader(webStream);
+                string response = responseReader.ReadToEnd();
+                responseReader.Close();
+
+                produto = JsonConvert.DeserializeObject<Produto>(response);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Ocorreu um erro com o termo {0}: {1} ", numeroDoRegistro, e.Message);
+                
+            }
+
+            return produto;
         }
 
-        private static List<string> LocalizarRegistroAnvisaPorPalavra(string comentario, List<string> listaRegistrosAnvisa)
+        private static List<KeyValuePair<string, string>> LocalizarRegistroAnvisaPorPalavra(string comentario, List<KeyValuePair<string, string>> listaRegistrosAnvisa)
         {
             var arrayPalavras = comentario.Split(" ");            
 
@@ -92,7 +132,7 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
                     long a = 0;
                     if(long.TryParse(palavraAnvisa, out a))
                     {
-                        listaRegistrosAnvisa.Add(a.ToString());
+                        listaRegistrosAnvisa.Insert(0, new KeyValuePair<string, string>(a.ToString(),string.Empty));
                     }
                 }
 
@@ -101,7 +141,7 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
                     long a = 0;
                     if (long.TryParse(item, out a))
                     {
-                        listaRegistrosAnvisa.Add(a.ToString());
+                        listaRegistrosAnvisa.Insert(0, new KeyValuePair<string, string>(a.ToString(), string.Empty));
                     }
                 }
             }
@@ -109,7 +149,7 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
             return listaRegistrosAnvisa;
         }
 
-        private static List<string> LocalizarRegistroAnvisaPorLetra(string comentario, List<string> listaRegistrosAnvisa)
+        private static List<KeyValuePair<string, string>> LocalizarRegistroAnvisaPorLetra(string comentario, List<KeyValuePair<string, string>> listaRegistrosAnvisa)
         {
             var arrDescricaoProduto = comentario.ToArray();
             var numero = new StringBuilder();
@@ -123,13 +163,17 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
                 }
                 else
                 {
-                    if (numero.Length == 11)
+                    if (numero.Length >= 9 && numero.Length <=11)
                     {
-                        listaRegistrosAnvisa.Add(numero.ToString());
+                        if (!listaRegistrosAnvisa.Contains(new KeyValuePair<string, string>(numero.ToString(), string.Empty)))
+                            listaRegistrosAnvisa.Insert(0, new KeyValuePair<string, string>(numero.ToString(), string.Empty));                       
                     }
-                    numero.Clear();
+
+                        numero.Clear();
                 }
             }
+
+            
 
             return listaRegistrosAnvisa;
         }
@@ -143,8 +187,8 @@ namespace RAS.BoldWork.EnriquecimentoDeDados
             using var con = new NpgsqlConnection(cs);
             con.Open();
 
-            string sql = string.Format(@"select  * from ""Siscori"" where substring(""NcmCodigo"", 1,2) = '{0}' limit 1000", capitulo);
-            using var cmd = new NpgsqlCommand(sql, con);
+            string sql = string.Format(@"select  * from ""Siscori"" where substring(""NcmCodigo"", 1,2) = '{0}' limit 10", capitulo);
+            using var cmd = new NpgsqlCommand(sql, con) { CommandTimeout = 120 } ;
 
             using NpgsqlDataReader rdr = cmd.ExecuteReader();
 
